@@ -3,4 +3,31 @@ from pydantic import BaseModel, EmailStr, field_validator
 from database import accounts_validators
 
 
-# Write your code here
+class UserBase(BaseModel):
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserRead(UserBase):
+    id: int
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class UserReadList(UserBase):
+    id: int
+    is_active: bool
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
