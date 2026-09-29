@@ -116,7 +116,7 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     ),
     responses={
         201: {
-            "description": "<h3>user has been successfully authorized.</h3>",
+            "description": "<h3>User has been successfully authorized.</h3>",
         },
         400: {
             "description": "Invalid input.",
@@ -136,19 +136,34 @@ async def user_login(
         db: AsyncSession = Depends(get_db),
         manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
-    db_user = await get_user_by_email(db, email)
+
+    try:
+        db_user = await get_user_by_email(db, email)
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing the request."
+        )
 
     if not db_user or not verify_password(password, db_user._hashed_password):
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password.",
         )
+
+    user_active = db_user.is_active
+
+    if not user_active:
+        raise HTTPException(
+            status_code=403,
+            detail="User account is not activated.",
+        )
+
     access_token = manager.create_access_token(
         data={"sub": db_user.email},
     )
     refresh_token = manager.create_refresh_token(
         data={"sub": db_user.email}
     )
-
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
