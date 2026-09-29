@@ -102,3 +102,49 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
             status_code=500,
             detail="An error occurred during user creation.",
         )
+
+
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Login a user",
+    description=(
+            "<h2>This endpoint is designed to log "
+            "in to a user account and generate access "
+            "and refresh tokens, after a successful login "
+            "stores the refresh token in the database.</h2>"
+    ),
+    responses={
+        201: {
+            "description": "<h3>user has been successfully authorized.</h3>",
+        },
+        400: {
+            "description": "Invalid input.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid input data."}
+                }
+            },
+        }
+    },
+    status_code=201
+)
+async def user_login(
+        email: str,
+        password: str,
+
+        db: AsyncSession = Depends(get_db),
+        manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+):
+    db_user = await get_user_by_email(db, email)
+
+    if not db_user or not verify_password(password, db_user._hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password.",
+        )
+    access_token = manager.create_access_token(
+        data={"sub": db_user.email},
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
