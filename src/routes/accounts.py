@@ -47,11 +47,18 @@ async def create_user(db: AsyncSession, user: UserCreate):
         _hashed_password=hashed,
         group_id=total_user.id,
     )
-    db.add(db_user)
-    await db.commit()
-    await db.refresh(db_user)
 
-    print(f"Created new user: {db_user.email}: {db_user.activation_token}")
+    create_activation_token = ActivationTokenModel(
+        user=db_user,
+    )
+
+    db.add(db_user)
+    db.add(create_activation_token)
+    await db.commit()
+
+    print(create_activation_token.token)
+
+    await db.refresh(db_user)
 
     return db_user
 
@@ -176,7 +183,6 @@ async def user_login(
 
 @router.post(
     "/activate",
-    response_model=TokenActivate,
     summary="Activate a user",
     description=(
             "<h2>This endpoint that allows users to "
@@ -184,18 +190,17 @@ async def user_login(
             "activation token and email.</h2>"
     ),
     responses={
-        201: {
+        200: {
             "description": "<h3>User account is already active.</h3>",
         }
     },
-    status_code=201
+    status_code=200
 )
 async def activate_user(
-        email: str,
-        token: str,
+        activate: TokenActivate,
         db: AsyncSession = Depends(get_db),
 ):
-    user = select(UserModel).where(UserModel.email == email)
+    user = select(UserModel).where(UserModel.email == activate.email)
     result = await db.execute(user)
     db_user = result.scalar_one_or_none()
 
@@ -211,15 +216,31 @@ async def activate_user(
             detail="User account is already active.",
         )
 
-    if token != db_user.access_token:
+    token = select(ActivationTokenModel).where(ActivationTokenModel.token == activate.token)
+    result_token = await db.execute(token)
+    db_token = result_token.scalar_one_or_none()
+
+    if not db_token:
+        raise HTTPException(
+            status_code=404,
+            detail="Activation token not found.",
+        )
+
+    if db_token.expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=400,
             detail="Invalid or expired activation token.",
         )
 
-    if token == db_user.access_token:
-        db_user.is_active = True
-        await db.commit()
-        db_user.access_token = None
+
+    if db_user.id != db_token.user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid token",
+        )
+
+    db_user.is_active = True
+    await db.delete(db_token)
+    await db.commit()
 
     return {"message": "User account activated successfully."}

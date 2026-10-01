@@ -35,4 +35,6 @@ class Token(BaseModel):
 class TokenActivate(UserBase):
     token: str
 
-
+    model_config = {
+        "from_attributes": True
+    }
