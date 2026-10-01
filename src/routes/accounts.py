@@ -50,6 +50,9 @@ async def create_user(db: AsyncSession, user: UserCreate):
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
+
+    print(f"Created new user: {db_user.email}: {db_user.activation_token}")
+
     return db_user
 
 
