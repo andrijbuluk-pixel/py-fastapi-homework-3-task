@@ -38,3 +38,7 @@ class TokenActivate(UserBase):
     model_config = {
         "from_attributes": True
     }
+
+
+class TokenRefresh(BaseModel):
+    refresh_token: str

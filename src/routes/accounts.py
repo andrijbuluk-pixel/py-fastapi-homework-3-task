@@ -24,6 +24,7 @@ from schemas.accounts import (
     UserCreate,
     UserReadList,
     TokenActivate,
+    TokenRefresh,
     Token
 )
 from fastapi.security import OAuth2PasswordBearer
@@ -180,7 +181,7 @@ async def user_login(
 
     db_refresh_token = RefreshTokenModel(
         token=refresh_token,
-        user=db_user.id,
+        user_id=db_user.id,
     )
 
     db.add(db_refresh_token)
@@ -252,3 +253,65 @@ async def activate_user(
     await db.commit()
 
     return {"message": "User account activated successfully."}
+
+
+@router.post(
+    "/refresh",
+    response_model=Token,
+    summary="Register a new user",
+    description="<h2>This endpoint is intended for creating a new user.<h2>",
+    responses={
+        201: {
+            "description": "<h3>User created successfully.</h3>",
+        },
+        400: {
+            "description": "Invalid input.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid input data."}
+                }
+            },
+        }
+    },
+    status_code=201
+
+)
+async def refresh_user_token(
+        refresh_data: TokenRefresh,
+        db: AsyncSession = Depends(get_db),
+        jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+):
+    decoded_token = jwt_manager.decode_refresh_token(refresh_data.refresh_token)
+
+    refresh_token_model = select(RefreshTokenModel).where(RefreshTokenModel.token == refresh_data.refresh_token)
+    result = await db.execute(refresh_token_model)
+    db_token = result.scalar_one_or_none()
+
+    if not db_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Refresh token not found.",
+        )
+
+
+    user = select(UserModel).where(UserModel.id == db_token.user_id)
+    result = await db.execute(user)
+    db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    new_access_token = jwt_manager.create_access_token(
+        data={
+            "sub": int(db_user.id),
+            "refresh_token": refresh_data.refresh_token,
+        }
+    )
+    return {
+        "access_token": new_access_token,
+        "refresh_token": refresh_data.refresh_token,
+        "token_type": "bearer"
+    }
