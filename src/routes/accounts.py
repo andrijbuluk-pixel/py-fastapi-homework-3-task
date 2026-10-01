@@ -178,6 +178,14 @@ async def user_login(
         data={"sub": db_user.email}
     )
 
+    db_refresh_token = RefreshTokenModel(
+        token=refresh_token,
+        user=db_user.id,
+    )
+
+    db.add(db_refresh_token)
+    await db.commit()
+
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
