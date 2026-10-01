@@ -7,6 +7,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.sql.functions import current_user
 
 from config import get_jwt_auth_manager, get_settings, BaseAppSettings, settings
 from database import (
@@ -22,6 +23,7 @@ from schemas.accounts import (
     UserRead,
     UserCreate,
     UserReadList,
+    TokenActivate,
     Token
 )
 from fastapi.security import OAuth2PasswordBearer
@@ -167,3 +169,54 @@ async def user_login(
     )
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@router.post(
+    "/activate",
+    response_model=TokenActivate,
+    summary="Activate a user",
+    description=(
+            "<h2>This endpoint that allows users to "
+            "activate their accounts by providing a valid "
+            "activation token and email.</h2>"
+    ),
+    responses={
+        201: {
+            "description": "<h3>User account is already active.</h3>",
+        }
+    },
+    status_code=201
+)
+async def activate_user(
+        email: str,
+        token: str,
+        db: AsyncSession = Depends(get_db),
+):
+    user = select(UserModel).where(UserModel.email == email)
+    result = await db.execute(user)
+    db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    if db_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="User account is already active.",
+        )
+
+    if token != db_user.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired activation token.",
+        )
+
+    if token == db_user.access_token:
+        db_user.is_active = True
+        await db.commit()
+        db_user.access_token = None
+
+    return {"message": "User account activated successfully."}

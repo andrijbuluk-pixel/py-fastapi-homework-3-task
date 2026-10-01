@@ -1,6 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
-
-from database import accounts_validators
+from pydantic import BaseModel, EmailStr
 
 
 class UserBase(BaseModel):
@@ -32,3 +30,9 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str
+
+
+class TokenActivate(UserBase):
+    token: str
+
+
