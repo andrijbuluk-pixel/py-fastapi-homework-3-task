@@ -2,7 +2,7 @@ from collections import UserList
 from datetime import datetime, timezone, timedelta
 from typing import cast
 
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, status, HTTPException, Body
 from sqlalchemy import select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,7 +82,7 @@ async def get_user_all(db: AsyncSession = Depends(get_db)):
 
 
 @router.post(
-    "/register",
+    "/register/",
     response_model=UserRead,
     summary="Register a new user",
     description="<h2>This endpoint is intended for creating a new user.<h2>",
@@ -120,7 +120,7 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post(
-    "/login",
+    "/login/",
     response_model=Token,
     summary="Login a user",
     description=(
@@ -193,7 +193,7 @@ async def user_login(
 
 
 @router.post(
-    "/activate",
+    "/activate/",
     summary="Activate a user",
     description=(
             "<h2>This endpoint that allows users to "
@@ -258,7 +258,7 @@ async def activate_user(
 
 
 @router.post(
-    "/refresh",
+    "/refresh/",
     response_model=Token,
     summary="Register a new user",
     description="<h2>This endpoint is intended for creating a new user.<h2>",
@@ -320,13 +320,13 @@ async def refresh_user_token(
 
 
 @router.post(
-    "/password-reset/request",
+    "/password-reset/request/",
     summary="Reset password",
     description="<h2>This endpoint is intended for updating the password to a new one.<h2>",
     status_code=200,
 )
 async def password_reset(
-        email: str,
+        email: str = Body(embed=True),
         db: AsyncSession = Depends(get_db),
 ):
     user = select(UserModel).where(UserModel.email == email)
@@ -355,3 +355,58 @@ async def password_reset(
         await db.commit()
 
     return {"message": "If you are registered, you will receive an email with instructions."}
+
+
+@router.post(
+    "/reset-password/complete/",
+    summary="Reset password",
+    description="<h2>This endpoint for password confirmation.<h2>",
+    status_code=200,
+)
+async def password_complete(
+        email: str,
+        token: str,
+        password: str,
+        db: AsyncSession = Depends(get_db),
+):
+    try:
+        user_token = select(PasswordResetTokenModel).where(PasswordResetTokenModel.token == token)
+        result = await db.execute(user_token)
+        db_token = result.scalar_one_or_none()
+    except:
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while resetting the password.",
+        )
+
+    if not db_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token.",
+        )
+
+    if db_token.user.email != email:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token.",
+        )
+
+    expires_at = cast(datetime, db_token.expires_at).replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        await db.delete(db_token)
+        await db.flush()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token.",
+        )
+
+    if db_token.user.is_active is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token.",
+        )
+
+    db_token.user._hashed_password = hash_password(password)
+    await db.delete(db_token)
+    await db.commit()
+    return {"message": "Password reset successfully."}
