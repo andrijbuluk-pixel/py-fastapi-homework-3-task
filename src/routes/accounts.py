@@ -20,6 +20,7 @@ from database import (
     RefreshTokenModel
 )
 from schemas.accounts import (
+    UserBase,
     UserRead,
     UserCreate,
     UserReadList,
@@ -31,6 +32,7 @@ from fastapi.security import OAuth2PasswordBearer
 from exceptions import BaseSecurityError
 from security.interfaces import JWTAuthManagerInterface
 from security.passwords import hash_password, verify_password
+from security.utils import generate_secure_token
 
 router = APIRouter()
 
@@ -315,3 +317,41 @@ async def refresh_user_token(
         "refresh_token": refresh_data.refresh_token,
         "token_type": "bearer"
     }
+
+
+@router.post(
+    "/password-reset/request",
+    summary="Reset password",
+    description="<h2>This endpoint is intended for updating the password to a new one.<h2>",
+    status_code=200,
+)
+async def password_reset(
+        email: str,
+        db: AsyncSession = Depends(get_db),
+):
+    user = select(UserModel).where(UserModel.email == email)
+    result = await db.execute(user)
+    db_user = result.scalar_one_or_none()
+
+    if db_user and db_user.is_active:
+        old_token = select(PasswordResetTokenModel).where(PasswordResetTokenModel.user_id == db_user.id)
+        result = await db.execute(old_token)
+        db_token = result.scalar_one_or_none()
+
+        if db_token:
+            await db.delete(db_token)
+            await db.flush()
+
+        new_token_str = generate_secure_token(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        db_token = PasswordResetTokenModel(
+            token=new_token_str,
+            user_id=db_user.id,
+            expires_at=expires_at
+        )
+
+        db.add(db_token)
+        await db.commit()
+
+    return {"message": "If you are registered, you will receive an email with instructions."}
