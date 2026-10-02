@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from sqlalchemy import (
     ForeignKey,
@@ -220,7 +220,7 @@ class RefreshTokenModel(TokenBaseModel):
         the required attributes.
         """
         expires_at = datetime.now(timezone.utc) + timedelta(days=days_valid)
-        return cls(user_id=user_id, expires_at=expires_at, token=token)
+        return cls(user_id=cast(int, user_id), expires_at=expires_at, token=token)
 
     def __repr__(self):
         return f"<RefreshTokenModel(id={self.id}, token={self.token}, expires_at={self.expires_at})>"
