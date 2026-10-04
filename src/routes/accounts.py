@@ -1,16 +1,14 @@
 import re
-from collections import UserList
 from datetime import datetime, timezone, timedelta
 from typing import cast
 
-from fastapi import APIRouter, Depends, status, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy.sql.functions import current_user
+from sqlalchemy.orm import joinedload
 
-from config import get_jwt_auth_manager, get_settings, BaseAppSettings, settings
+from config import get_jwt_auth_manager
 from database import (
     get_db,
     UserModel,
@@ -21,7 +19,6 @@ from database import (
     RefreshTokenModel
 )
 from schemas.accounts import (
-    UserBase,
     UserRead,
     UserCreate,
     UserReadList,
@@ -29,10 +26,10 @@ from schemas.accounts import (
     TokenRefresh,
     PasswordResetRequestSchema,
     PasswordResetCompleteSchema,
+    TokenRefreshResponseSchema,
     Token
 )
 from fastapi.security import OAuth2PasswordBearer
-from exceptions import BaseSecurityError
 from security.interfaces import JWTAuthManagerInterface
 from security.passwords import hash_password, verify_password
 from security.utils import generate_secure_token
@@ -64,8 +61,6 @@ async def create_user(db: AsyncSession, user: UserCreate):
     db.add(db_user)
     db.add(create_activation_token)
     await db.commit()
-
-    print(create_activation_token.token)
 
     await db.refresh(db_user)
 
@@ -284,11 +279,11 @@ async def activate_user(
 
 @router.post(
     "/refresh/",
-    response_model=Token,
+    response_model=TokenRefreshResponseSchema,
     summary="Register a new user",
     description="<h2>This endpoint is intended for creating a new user.<h2>",
     responses={
-        201: {
+        200: {
             "description": "<h3>User created successfully.</h3>",
         },
         400: {
