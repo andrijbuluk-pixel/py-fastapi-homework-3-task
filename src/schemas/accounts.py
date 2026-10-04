@@ -42,3 +42,11 @@ class TokenActivate(UserBase):
 
 class TokenRefresh(BaseModel):
     refresh_token: str
+
+class PasswordResetCompleteSchema(BaseModel):
+    email: EmailStr
+    token: str
+    password: str
+
+class PasswordResetRequestSchema(BaseModel):
+    email: EmailStr

@@ -1,3 +1,4 @@
+import re
 from collections import UserList
 from datetime import datetime, timezone, timedelta
 from typing import cast
@@ -26,6 +27,8 @@ from schemas.accounts import (
     UserReadList,
     TokenActivate,
     TokenRefresh,
+    PasswordResetRequestSchema,
+    PasswordResetCompleteSchema,
     Token
 )
 from fastapi.security import OAuth2PasswordBearer
@@ -41,7 +44,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 async def create_user(db: AsyncSession, user: UserCreate):
     hashed = hash_password(user.password)
 
-    user_stmt = select(UserGroupModel).where(UserGroupModel.name == "user")
+    user_stmt = select(UserGroupModel).where(UserGroupModel.name == UserGroupEnum.USER)
     result_user = await db.execute(user_stmt)
     total_user = result_user.scalar_one_or_none()
 
@@ -51,7 +54,9 @@ async def create_user(db: AsyncSession, user: UserCreate):
         group_id=total_user.id,
     )
 
+    activation_token_str = generate_secure_token(32)
     create_activation_token = ActivationTokenModel(
+        token=activation_token_str,
         user=db_user,
     )
 
@@ -104,6 +109,19 @@ async def get_user_all(db: AsyncSession = Depends(get_db)):
 async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     db_user = await get_user_by_email(db, user.email)
 
+    pwd = user.password
+    if len(pwd) < 8:
+        raise HTTPException(status_code=422, detail="Password must contain at least 8 characters.")
+    if not re.search(r"[A-Z]", pwd):
+        raise HTTPException(status_code=422, detail="Password must contain at least one uppercase letter.")
+    if not re.search(r"\d", pwd):
+        raise HTTPException(status_code=422, detail="Password must contain at least one digit.")
+    if not re.search(r"[a-z]", pwd):
+        raise HTTPException(status_code=422, detail="Password must contain at least one lower letter.")
+    if not re.search(r"[@$!%*?#&]", pwd):
+        raise HTTPException(status_code=422,
+                            detail="Password must contain at least one special character: @, $, !, %, *, ?, #, &.")
+
     if db_user:
         raise HTTPException(
             status_code=409,
@@ -113,6 +131,7 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     try:
         return await create_user(db, user)
     except Exception:
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="An error occurred during user creation.",
@@ -145,22 +164,20 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     status_code=201
 )
 async def user_login(
-        email: str,
-        password: str,
-
+        payload: UserCreate,
         db: AsyncSession = Depends(get_db),
         manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
 
     try:
-        db_user = await get_user_by_email(db, email)
+        db_user = await get_user_by_email(db, payload.email)
     except Exception:
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing the request."
         )
 
-    if not db_user or not verify_password(password, db_user._hashed_password):
+    if not db_user or not verify_password(payload.password, db_user._hashed_password):
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password.",
@@ -175,10 +192,10 @@ async def user_login(
         )
 
     access_token = manager.create_access_token(
-        data={"sub": db_user.email},
+        data={"sub": db_user.email, "user_id": db_user.id},
     )
     refresh_token = manager.create_refresh_token(
-        data={"sub": db_user.email}
+        data={"sub": db_user.email, "user_id": db_user.id}
     )
 
     db_refresh_token = RefreshTokenModel(
@@ -187,7 +204,15 @@ async def user_login(
     )
 
     db.add(db_refresh_token)
-    await db.commit()
+
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing the request."
+        )
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
@@ -217,7 +242,7 @@ async def activate_user(
 
     if not db_user:
         raise HTTPException(
-            status_code=404,
+            status_code=400,
             detail="User not found.",
         )
 
@@ -233,11 +258,12 @@ async def activate_user(
 
     if not db_token:
         raise HTTPException(
-            status_code=404,
-            detail="Activation token not found.",
+            status_code=400,
+            detail="Invalid or expired activation token.",
         )
 
-    if db_token.expires_at < datetime.now(timezone.utc):
+    token_expires = cast(datetime, db_token.expires_at).replace(tzinfo=timezone.utc)
+    if token_expires < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=400,
             detail="Invalid or expired activation token.",
@@ -275,7 +301,7 @@ async def activate_user(
             },
         }
     },
-    status_code=201
+    status_code=200
 
 )
 async def refresh_user_token(
@@ -283,7 +309,13 @@ async def refresh_user_token(
         db: AsyncSession = Depends(get_db),
         jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
-    decoded_token = jwt_manager.decode_refresh_token(refresh_data.refresh_token)
+    try:
+        decoded_token = jwt_manager.decode_refresh_token(refresh_data.refresh_token)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Token has expired.",
+        )
 
     refresh_token_model = select(RefreshTokenModel).where(RefreshTokenModel.token == refresh_data.refresh_token)
     result = await db.execute(refresh_token_model)
@@ -308,7 +340,8 @@ async def refresh_user_token(
 
     new_access_token = jwt_manager.create_access_token(
         data={
-            "sub": int(db_user.id),
+            "sub": str(db_user.id),
+            "user_id": db_user.id,
             "refresh_token": refresh_data.refresh_token,
         }
     )
@@ -326,10 +359,10 @@ async def refresh_user_token(
     status_code=200,
 )
 async def password_reset(
-        email: str = Body(embed=True),
+        payload: PasswordResetRequestSchema,
         db: AsyncSession = Depends(get_db),
 ):
-    user = select(UserModel).where(UserModel.email == email)
+    user = select(UserModel).where(UserModel.email == payload.email)
     result = await db.execute(user)
     db_user = result.scalar_one_or_none()
 
@@ -364,28 +397,49 @@ async def password_reset(
     status_code=200,
 )
 async def password_complete(
-        email: str,
-        token: str,
-        password: str,
+        payload: PasswordResetCompleteSchema,
         db: AsyncSession = Depends(get_db),
 ):
     try:
-        user_token = select(PasswordResetTokenModel).where(PasswordResetTokenModel.token == token)
+        user_token = (
+            select(PasswordResetTokenModel)
+            .options(joinedload(PasswordResetTokenModel.user))
+            .where(PasswordResetTokenModel.token == payload.token)
+        )
         result = await db.execute(user_token)
         db_token = result.scalar_one_or_none()
     except:
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="An error occurred while resetting the password.",
         )
 
     if not db_token:
+        stmt = delete(PasswordResetTokenModel).where(
+            PasswordResetTokenModel.user_id.in_(
+                select(UserModel.id).where(UserModel.email == payload.email)
+            )
+        )
+        await db.execute(stmt)
+        await db.commit()
+
         raise HTTPException(
             status_code=400,
             detail="Invalid email or token.",
         )
 
-    if db_token.user.email != email:
+    if not db_token.user:
+        await db.delete(db_token)
+        await db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token.",
+        )
+
+    if db_token.user.email != payload.email:
+        await db.delete(db_token)
+        await db.commit()
         raise HTTPException(
             status_code=400,
             detail="Invalid email or token.",
@@ -394,19 +448,28 @@ async def password_complete(
     expires_at = cast(datetime, db_token.expires_at).replace(tzinfo=timezone.utc)
     if expires_at < datetime.now(timezone.utc):
         await db.delete(db_token)
-        await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=400,
             detail="Invalid email or token.",
         )
 
     if db_token.user.is_active is False:
+        await db.delete(db_token)
+        await db.commit()
         raise HTTPException(
             status_code=400,
             detail="Invalid email or token.",
         )
 
-    db_token.user._hashed_password = hash_password(password)
-    await db.delete(db_token)
-    await db.commit()
-    return {"message": "Password reset successfully."}
+    try:
+        db_token.user._hashed_password = hash_password(payload.password)
+        await db.delete(db_token)
+        await db.commit()
+        return {"message": "Password reset successfully."}
+    except:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while resetting the password."
+        )
