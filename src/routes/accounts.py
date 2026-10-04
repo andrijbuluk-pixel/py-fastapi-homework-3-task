@@ -144,7 +144,7 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
             "stores the refresh token in the database.</h2>"
     ),
     responses={
-        201: {
+        200: {
             "description": "<h3>User has been successfully authorized.</h3>",
         },
         400: {
@@ -156,7 +156,7 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
             },
         }
     },
-    status_code=201
+    status_code=200
 )
 async def user_login(
         payload: UserCreate,
@@ -340,8 +340,6 @@ async def refresh_user_token(
     )
     return {
         "access_token": new_access_token,
-        "refresh_token": refresh_data.refresh_token,
-        "token_type": "bearer"
     }
 
 
