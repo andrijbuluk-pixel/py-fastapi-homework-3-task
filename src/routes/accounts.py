@@ -41,6 +41,7 @@ router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
+
 async def create_user(db: AsyncSession, user: UserCreate):
     hashed = hash_password(user.password)
 
@@ -83,7 +84,6 @@ async def get_user_all(db: AsyncSession = Depends(get_db)):
     db_user = result_user.scalars().all()
 
     return db_user
-
 
 
 @router.post(
@@ -269,7 +269,6 @@ async def activate_user(
             detail="Invalid or expired activation token.",
         )
 
-
     if db_user.id != db_token.user_id:
         raise HTTPException(
             status_code=400,
@@ -310,7 +309,7 @@ async def refresh_user_token(
         jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ):
     try:
-        decoded_token = jwt_manager.decode_refresh_token(refresh_data.refresh_token)
+        jwt_manager.decode_refresh_token(refresh_data.refresh_token)
     except Exception:
         raise HTTPException(
             status_code=400,
@@ -326,7 +325,6 @@ async def refresh_user_token(
             status_code=401,
             detail="Refresh token not found.",
         )
-
 
     user = select(UserModel).where(UserModel.id == db_token.user_id)
     result = await db.execute(user)
@@ -408,7 +406,7 @@ async def password_complete(
         )
         result = await db.execute(user_token)
         db_token = result.scalar_one_or_none()
-    except:
+    except Exception:
         await db.rollback()
         raise HTTPException(
             status_code=500,
@@ -467,7 +465,7 @@ async def password_complete(
         await db.delete(db_token)
         await db.commit()
         return {"message": "Password reset successfully."}
-    except:
+    except Exception:
         await db.rollback()
         raise HTTPException(
             status_code=500,
